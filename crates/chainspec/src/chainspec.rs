@@ -11,8 +11,7 @@ use reth_optimism_chainspec::{
     OpChainSpec, SUPPORTED_CHAINS, generated_chain_value_parser, make_op_genesis_header,
 };
 use reth_optimism_forks::{OpHardfork, OpHardforks};
-use reth_primitives_traits::SealedHeader;
-use revm::bytecode::Bytecode;
+use reth_primitives_traits::{Bytecode, SealedHeader};
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
@@ -808,20 +807,28 @@ mod tests {
         );
     }
 
+    /// The transition panics on code it cannot decode, so a malformed EIP-7702 designator must fail
+    /// at startup rather than at the activation block.
     #[test]
     fn state_override_rejects_malformed_eip7702_code() {
-        let designator = |address_len: usize| format!("0xef0100{}", "11".repeat(address_len));
-        let with_code = |code: String| {
+        let with_code = |code: &str| {
             let mut genesis: serde_json::Value =
-                serde_json::from_str(&with_conduit_forks(&[5000])).unwrap();
+                serde_json::from_str(&with_conduit_fork(5000)).unwrap();
             genesis["config"]["conduit"]["stateOverrideFork0"]["updates"]["0x4200000000000000000000000000000000000042"]
                 ["code"] = serde_json::json!(code);
             serde_json::to_string(&genesis).unwrap()
         };
+        let address = "11".repeat(20);
 
-        parse_spec(&with_code(designator(20)));
-        for bad in [designator(19), designator(21), format!("0xef0101{}", "11".repeat(20))] {
-            let err = try_parse_spec(&with_code(bad.clone())).map(|_| ()).unwrap_err();
+        // A well-formed designator still parses.
+        parse_spec(&with_code(&format!("0xef0100{address}")));
+
+        for bad in [
+            format!("0xef0100{}", "11".repeat(19)), // short address
+            format!("0xef0100{}", "11".repeat(21)), // long address
+            format!("0xef0101{address}"),           // unsupported version
+        ] {
+            let err = try_parse_spec(&with_code(&bad)).map(|_| ()).unwrap_err();
             assert!(
                 err.to_string().contains("StateOverrideFork0 code for") &&
                     err.to_string().contains("is not valid bytecode"),
