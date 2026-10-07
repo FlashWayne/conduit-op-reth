@@ -446,6 +446,18 @@ impl ConduitOpChainSpec {
                 return Err(eyre::eyre!("EvmLimitsFork0 must configure at least one EVM limit"));
             }
 
+            // REVM applies a zero limit literally rather than as "unset", so a zero
+            // txGasLimitCap would reject every non-deposit transaction.
+            if raw.max_code_size == Some(0) {
+                return Err(eyre::eyre!("EvmLimitsFork0 maxCodeSize must be greater than zero"));
+            }
+            if raw.max_initcode_size == Some(0) {
+                return Err(eyre::eyre!("EvmLimitsFork0 maxInitcodeSize must be greater than zero"));
+            }
+            if raw.tx_gas_limit_cap == Some(0) {
+                return Err(eyre::eyre!("EvmLimitsFork0 txGasLimitCap must be greater than zero"));
+            }
+
             if let Some(conflicting_fork) =
                 op_chain_spec.inner.hardforks.forks_iter().find_map(|(fork, condition)| {
                     (condition == ForkCondition::Timestamp(raw.time)).then(|| fork.name())
@@ -1114,6 +1126,23 @@ mod tests {
 
             let err = try_parse_spec(&serde_json::to_string(&genesis).unwrap()).unwrap_err();
             assert!(err.to_string().contains("must configure at least one EVM limit"));
+        }
+    }
+
+    /// REVM enforces a zero limit literally, so it would block every transaction or deployment.
+    #[test]
+    fn evm_limits_fork_rejects_zero_limits() {
+        for field in ["maxCodeSize", "maxInitcodeSize", "txGasLimitCap"] {
+            let mut genesis: serde_json::Value =
+                serde_json::from_str(&with_evm_limits_fork(Some(1000), 2000)).unwrap();
+            genesis["config"]["conduit"]["evmLimitsFork0"][field] = serde_json::json!(0);
+
+            let err = try_parse_spec(&serde_json::to_string(&genesis).unwrap()).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("EvmLimitsFork0 {field} must be greater than zero")),
+                "{field}: unexpected error: {err}",
+            );
         }
     }
 
